@@ -91,7 +91,6 @@ function AuthModal({ isOpen, onClose, onLoginSuccess }) {
   );
 }
 
-
 // --- MAIN APP COMPONENT ---
 export default function App() {
   const [game, setGame] = useState(new Chess());
@@ -110,7 +109,7 @@ export default function App() {
 
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [optionSquares, setOptionSquares] = useState({});
-  const [moveFrom, setMoveFrom] = useState(null); // NEW: Tracks the currently clicked piece
+  const [moveFrom, setMoveFrom] = useState(null); 
 
   useEffect(() => {
     const socket = new SockJS(`${BACKEND_URL}/chess-socket`);
@@ -198,13 +197,11 @@ export default function App() {
   }
 
   function subscribeToRoom(message) {
-    // Remove extra quotes and handle newlines from the server
     const cleanData = message.body.replace(/^"|"$/g, '').replace(/\\n/g, '\n').replace(/\\"/g, '"');
     
     setGame((currentGame) => {
       const newGame = new Chess();
       try {
-        // Always prefer PGN for multiplayer to keep history synced
         if (cleanData.includes("1.") || cleanData.includes("[")) {
           newGame.loadPgn(cleanData);
         } else {
@@ -213,7 +210,7 @@ export default function App() {
         return newGame;
       } catch (err) {
         console.error("Multiplayer Sync Error: ", err);
-        return currentGame; // Keep the current board if the incoming move is 'illegal'
+        return currentGame; 
       }
     });
   }
@@ -233,12 +230,11 @@ export default function App() {
     if (roomSubscriptionRef.current) roomSubscriptionRef.current.unsubscribe();
   }
 
-  // --- NEW UNDO FUNCTIONALITY ---
   function handleUndo() {
     if (gameMode !== 'practice') return;
     const gameCopy = new Chess();
     gameCopy.loadPgn(game.pgn());
-    gameCopy.undo(); // Remove the last move
+    gameCopy.undo(); 
     setGame(gameCopy);
     setOptionSquares({});
     setMoveFrom(null);
@@ -264,7 +260,7 @@ export default function App() {
     return true;
   }
 
-  // --- UNIFIED MOVE LOGIC (Handles both clicks and drags) ---
+  // --- UNIFIED MOVE LOGIC ---
   function makeMove(sourceSquare, targetSquare) {
     if (game.isGameOver() || isAiThinking) return false;
     
@@ -277,9 +273,8 @@ export default function App() {
       
       setGame(gameCopy);
       setOptionSquares({}); 
-      setMoveFrom(null); // Clear click selection
+      setMoveFrom(null); 
 
-      // Trophy logic 
       if (gameCopy.isGameOver() && currentUser) {
         let outcome = 'draw';
         if (gameCopy.isCheckmate()) {
@@ -315,27 +310,21 @@ export default function App() {
     }
   }
 
-  // --- NEW CLICK TO MOVE LOGIC ---
   function onSquareClick(square) { 
     if (isAiThinking || game.isGameOver()) return;
 
-    // If we already selected a piece in a previous click
     if (moveFrom) {
       const moveSuccess = makeMove(moveFrom, square);
-      
       if (!moveSuccess) {
-        // If the move failed, check if they just clicked a different piece of their own to select it instead
         if (game.get(square) && game.get(square).color === game.turn()) {
           setMoveFrom(square);
           getMoveOptions(square);
         } else {
-          // Otherwise, just cancel the selection
           setMoveFrom(null);
           setOptionSquares({});
         }
       }
     } else {
-      // First click: select the piece if it exists and belongs to the current turn
       if (game.get(square) && game.get(square).color === game.turn()) {
         const hasMoves = getMoveOptions(square);
         if (hasMoves) setMoveFrom(square);
@@ -343,18 +332,7 @@ export default function App() {
     }
   }
 
-  // Drag and drop now just calls the unified move logic
   function onDrop(sourceSquare, targetSquare) {
-    if (gameMode === 'multiplayer') {
-        if (stompClient && stompClient.connected) {
-          // Send the full PGN history so the other player can reconstruct the game perfectly
-          const pgnData = gameCopy.pgn();
-          stompClient.publish({ 
-            destination: '/app/room/move', 
-            body: JSON.stringify({ roomId: roomId, fen: pgnData }) 
-          });
-        }
-      }
     return makeMove(sourceSquare, targetSquare);
   }
 
@@ -423,7 +401,6 @@ export default function App() {
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
               <button onClick={leaveGame} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '5px' }}>← Back to Lobby</button>
               
-              {/* NEW: Conditional Undo Button */}
               {gameMode === 'practice' && (
                 <button onClick={handleUndo} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#ffa500', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold' }}>↩ Undo</button>
               )}
