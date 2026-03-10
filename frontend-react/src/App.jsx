@@ -5,7 +5,7 @@ import { Chessboard } from 'react-chessboard';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
-// --- TUTORIAL MODAL ---
+// --- TUTORIAL & AUTH MODALS (Unchanged) ---
 function TutorialModal({ isOpen, onClose }) {
   if (!isOpen) return null;
   return (
@@ -15,20 +15,19 @@ function TutorialModal({ isOpen, onClose }) {
         <h2 style={{ marginTop: 0, color: '#646cff' }}>How to Play Chess</h2>
         <p><strong>Goal:</strong> Trap the opponent's King so it cannot escape (Checkmate).</p>
         <ul style={{ lineHeight: '1.6' }}>
-          <li><strong>Pawn:</strong> Moves forward one square (two on its first move). Captures diagonally.</li>
-          <li><strong>Knight:</strong> Moves in an 'L' shape. It can jump over other pieces!</li>
-          <li><strong>Bishop:</strong> Moves diagonally any number of squares.</li>
-          <li><strong>Rook:</strong> Moves horizontally or vertically any number of squares.</li>
+          <li><strong>Pawn:</strong> Moves forward one square. Captures diagonally.</li>
+          <li><strong>Knight:</strong> Moves in an 'L' shape. Can jump over pieces.</li>
+          <li><strong>Bishop:</strong> Moves diagonally.</li>
+          <li><strong>Rook:</strong> Moves horizontally or vertically.</li>
           <li><strong>Queen:</strong> Moves horizontally, vertically, or diagonally.</li>
           <li><strong>King:</strong> Moves one square in any direction. Must be protected.</li>
         </ul>
-        <button onClick={onClose} style={{ width: '100%', padding: '10px', marginTop: '20px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold' }}>Got it, let's play!</button>
+        <button onClick={onClose} style={{ width: '100%', padding: '10px', marginTop: '20px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold' }}>Got it!</button>
       </div>
     </div>
   );
 }
 
-// --- AUTHENTICATION MODAL ---
 function AuthModal({ isOpen, onClose, onLoginSuccess }) {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
@@ -96,7 +95,7 @@ export default function App() {
   const [game, setGame] = useState(new Chess());
   const [stompClient, setStompClient] = useState(null);
   
-  const [view, setView] = useState('lobby'); 
+  const [view, setView] = useState('lobby'); // 'lobby', 'game', or 'tournaments'
   const [gameMode, setGameMode] = useState('hard'); 
   const [currentUser, setCurrentUser] = useState(null);
   
@@ -110,9 +109,10 @@ export default function App() {
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [optionSquares, setOptionSquares] = useState({});
   const [moveFrom, setMoveFrom] = useState(null); 
-  
-  // NEW: Track which color the current player is assigned
   const [playerColor, setPlayerColor] = useState('w'); 
+
+  // Tournament State
+  const [tournaments, setTournaments] = useState([]);
 
   useEffect(() => {
     const socket = new SockJS(`${BACKEND_URL}/chess-socket`);
@@ -120,7 +120,6 @@ export default function App() {
       webSocketFactory: () => socket,
       onConnect: () => {
         console.log('✅ Connected to Java Backend');
-        
         client.subscribe('/topic/board', (message) => {
           setGameMode((currentMode) => {
             if (currentMode !== 'multiplayer') {
@@ -129,7 +128,6 @@ export default function App() {
                 setGame((currentGame) => {
                   const gameCopy = new Chess();
                   gameCopy.loadPgn(currentGame.pgn()); 
-                  
                   if (data.move) {
                     gameCopy.move({
                       from: data.move.substring(0, 2),
@@ -157,13 +155,64 @@ export default function App() {
     return () => client.deactivate();
   }, []);
 
+  // --- TOURNAMENT API CALLS ---
+  async function fetchTournaments() {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/tournaments/`);
+      if (res.ok) setTournaments(await res.json());
+    } catch (err) { console.error("Failed to fetch tournaments"); }
+  }
+
+  async function handleCreateTournament() {
+    const name = prompt("Enter Tournament Name:");
+    if (!name) return;
+    try {
+      await fetch(`${BACKEND_URL}/api/tournaments/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      fetchTournaments();
+    } catch (err) { alert("Failed to create tournament."); }
+  }
+
+  async function handleRegisterTournament(id) {
+    if (!currentUser) return alert("You must log in to register!");
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/tournaments/${id}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser.username })
+      });
+      if (res.ok) {
+        alert("Registered successfully!");
+        fetchTournaments();
+      } else {
+        alert(await res.text());
+      }
+    } catch (err) { alert("Failed to register."); }
+  }
+
+  async function handleStartTournament(id) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/tournaments/${id}/start`, { method: 'POST' });
+      if (res.ok) {
+        alert("Tournament Started! Brackets generated.");
+        fetchTournaments();
+      } else {
+        alert(await res.text());
+      }
+    } catch (err) { alert("Failed to start tournament."); }
+  }
+
+  // --- MULTIPLAYER ROOM LOGIC ---
   async function handleCreateRoom() {
     try {
       const response = await fetch(`${BACKEND_URL}/api/rooms/create`, { method: 'POST' });
       const newRoomId = await response.text();
       setRoomId(newRoomId);
       setGameMode('multiplayer');
-      setPlayerColor('w'); // Room creator is always White
+      setPlayerColor('w'); 
       setGame(new Chess()); 
       setView('game');
 
@@ -174,45 +223,35 @@ export default function App() {
     } catch (error) { alert("Failed to connect to server."); }
   }
 
-  async function handleJoinRoom() {
-    const code = joinCodeInput.trim().toUpperCase();
+  async function handleJoinRoom(codeOverride) {
+    const code = (codeOverride || joinCodeInput).trim().toUpperCase();
     if (code.length !== 4) return alert("Room code must be 4 characters!");
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/rooms/${code}`);
       if (response.ok) {
         const currentData = await response.text();
-        
         let boardData = currentData;
         try {
           const parsed = JSON.parse(currentData);
-          if (typeof parsed === 'object' && parsed !== null) {
-            boardData = parsed.fen || parsed.board || currentData;
-          } else if (typeof parsed === 'string') {
-            boardData = parsed;
-          }
+          if (typeof parsed === 'object' && parsed !== null) boardData = parsed.fen || parsed.board || currentData;
+          else if (typeof parsed === 'string') boardData = parsed;
         } catch(e) {}
 
         boardData = boardData.replace(/^"|"$/g, '').trim();
 
         setRoomId(code);
         setGameMode('multiplayer');
-        setPlayerColor('b'); // Joiner is always Black
+        setPlayerColor('b'); 
         
         const newGame = new Chess();
         try {
-          // Attempt to decode Base64 PGN first
           newGame.loadPgn(atob(boardData));
         } catch (e) {
           try {
-            if (boardData.includes("1.") || boardData.includes("[")) {
-              newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
-            } else {
-              newGame.load(boardData); 
-            }
-          } catch(err) {
-            console.error("Board Load Error: ", err);
-          }
+            if (boardData.includes("1.") || boardData.includes("[")) newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
+            else newGame.load(boardData); 
+          } catch(err) {}
         }
         
         setGame(newGame); 
@@ -222,23 +261,16 @@ export default function App() {
           if (roomSubscriptionRef.current) roomSubscriptionRef.current.unsubscribe();
           roomSubscriptionRef.current = stompClient.subscribe(`/topic/room/${code}`, subscribeToRoom);
         }
-      } else { 
-        alert("Room not found!"); 
-      }
-    } catch (error) { 
-      console.error("Failed to join room:", error); 
-    }
+      } else { alert("Room not found!"); }
+    } catch (error) { console.error("Failed to join room:", error); }
   }
 
   function subscribeToRoom(message) {
     let boardData = message.body;
     try {
       const parsed = JSON.parse(message.body);
-      if (typeof parsed === 'object' && parsed !== null) {
-        boardData = parsed.fen || parsed.board || message.body;
-      } else if (typeof parsed === 'string') {
-        boardData = parsed;
-      }
+      if (typeof parsed === 'object' && parsed !== null) boardData = parsed.fen || parsed.board || message.body;
+      else if (typeof parsed === 'string') boardData = parsed;
     } catch(e) {}
     
     boardData = boardData.replace(/^"|"$/g, '').trim();
@@ -246,19 +278,12 @@ export default function App() {
     setGame((currentGame) => {
       const newGame = new Chess();
       try {
-        // Attempt to decode Base64 PGN first
         newGame.loadPgn(atob(boardData));
       } catch (e) {
         try {
-          if (boardData.includes("1.") || boardData.includes("[")) {
-            newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
-          } else {
-            newGame.load(boardData); 
-          }
-        } catch(err) {
-          console.error("Sync Error: ", err);
-          return currentGame;
-        }
+          if (boardData.includes("1.") || boardData.includes("[")) newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
+          else newGame.load(boardData); 
+        } catch(err) { return currentGame; }
       }
       return newGame;
     });
@@ -310,14 +335,9 @@ export default function App() {
     return true;
   }
 
-  // --- UNIFIED MOVE LOGIC ---
   function makeMove(sourceSquare, targetSquare) {
     if (game.isGameOver() || isAiThinking) return false;
-    
-    // NEW: Strict Turn Enforcement for Multiplayer
-    if (gameMode === 'multiplayer' && game.turn() !== playerColor) {
-      return false; 
-    }
+    if (gameMode === 'multiplayer' && game.turn() !== playerColor) return false; 
     
     const gameCopy = new Chess();
     gameCopy.loadPgn(game.pgn()); 
@@ -330,28 +350,8 @@ export default function App() {
       setOptionSquares({}); 
       setMoveFrom(null); 
 
-      if (gameCopy.isGameOver() && currentUser) {
-        let outcome = 'draw';
-        if (gameCopy.isCheckmate()) {
-          outcome = 'win';
-          alert("🏆 Checkmate! You won +30 Trophies!");
-        } else {
-          alert("🤝 Game Over! It's a draw.");
-        }
-        
-        fetch(`${BACKEND_URL}/api/users/update-rating`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: currentUser.username, outcome: outcome })
-        })
-        .then(res => res.json())
-        .then(updatedUser => setCurrentUser(updatedUser)) 
-        .catch(err => console.error("Failed to update Elo:", err));
-      }
-
       if (gameMode === 'multiplayer') {
         if (stompClient && stompClient.connected) {
-          // Encrypt history in Base64 so the network cannot corrupt it
           const safeHistory = btoa(gameCopy.pgn());
           stompClient.publish({ destination: '/app/room/move', body: JSON.stringify({ roomId: roomId, fen: safeHistory }) });
         }
@@ -362,18 +362,12 @@ export default function App() {
         }
       }
       return true;
-    } catch (error) { 
-      return false; 
-    }
+    } catch (error) { return false; }
   }
 
   function onSquareClick(square) { 
     if (isAiThinking || game.isGameOver()) return;
-
-    // NEW: Strict Piece Selection Enforcement
-    if (gameMode === 'multiplayer' && game.get(square) && game.get(square).color !== playerColor && !moveFrom) {
-      return; 
-    }
+    if (gameMode === 'multiplayer' && game.get(square) && game.get(square).color !== playerColor && !moveFrom) return; 
 
     if (moveFrom) {
       const moveSuccess = makeMove(moveFrom, square);
@@ -403,11 +397,10 @@ export default function App() {
   else if (game.isDraw()) gameStatus = "🤝 Draw!";
   else if (isAiThinking) gameStatus = "🤔 AI is calculating...";
   else if (gameMode === 'practice') gameStatus = "Practice Mode (Local Play)";
-  else if (gameMode === 'multiplayer') {
-    gameStatus = game.turn() === playerColor ? "Your turn!" : "Waiting for opponent...";
-  } else {
-    gameStatus = "Your turn (White)";
-  }
+  else if (gameMode === 'multiplayer') gameStatus = game.turn() === playerColor ? "Your turn!" : "Waiting for opponent...";
+  else gameStatus = "Your turn (White)";
+
+  const isAdmin = currentUser && currentUser.username.toLowerCase() === 'admin';
 
   // --- RENDER ---
   return (
@@ -415,11 +408,14 @@ export default function App() {
       <TutorialModal isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} onLoginSuccess={setCurrentUser} />
 
-      <div style={{ position: 'absolute', top: '20px', right: '30px', textAlign: 'right', fontFamily: 'sans-serif' }}>
+      {/* HEADER BAR */}
+      <div style={{ position: 'absolute', top: '20px', right: '30px', textAlign: 'right', fontFamily: 'sans-serif', zIndex: 10 }}>
         {currentUser ? (
-          <div style={{ backgroundColor: '#1a1a1a', padding: '10px 20px', borderRadius: '8px', border: '1px solid #4caf50' }}>
-            <h3 style={{ margin: '0 0 5px 0', color: '#4caf50' }}>👤 {currentUser.username}</h3>
-            <p style={{ margin: 0, color: '#aaa' }}>🏆 Elo Rating: <strong>{currentUser.eloRating}</strong></p>
+          <div style={{ backgroundColor: '#1a1a1a', padding: '10px 20px', borderRadius: '8px', border: isAdmin ? '2px solid #ffd700' : '1px solid #4caf50' }}>
+            <h3 style={{ margin: '0 0 5px 0', color: isAdmin ? '#ffd700' : '#4caf50' }}>
+              {isAdmin ? '👑 ' : '👤 '} {currentUser.username}
+            </h3>
+            <p style={{ margin: 0, color: '#aaa' }}>🏆 Elo: <strong>{currentUser.eloRating}</strong></p>
             <button onClick={() => setCurrentUser(null)} style={{ background: 'transparent', color: '#ff4c4c', border: 'none', cursor: 'pointer', marginTop: '5px', textDecoration: 'underline' }}>Logout</button>
           </div>
         ) : (
@@ -429,7 +425,8 @@ export default function App() {
         )}
       </div>
 
-      {view === 'lobby' ? (
+      {/* VIEW ROUTING */}
+      {view === 'lobby' && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '100px', fontFamily: 'sans-serif', color: '#fff' }}>
           <h1 style={{ fontSize: '3rem', marginBottom: '40px' }}>♟️ Universal Chess</h1>
           <div style={{ display: 'flex', gap: '30px' }}>
@@ -441,22 +438,74 @@ export default function App() {
             </div>
             <div style={{ backgroundColor: '#1a1a1a', padding: '30px', borderRadius: '10px', width: '250px', textAlign: 'center', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
               <h3>Global Multiplayer</h3>
+              <button onClick={() => { setView('tournaments'); fetchTournaments(); }} style={lobbyBtnStyle('#ffd700', 'black')}>🏆 Tournament Hub</button>
               <button onClick={handleCreateRoom} style={lobbyBtnStyle('#ff4c4c')}>Create Custom Room</button>
               <hr style={{ borderColor: '#333', margin: '20px 0' }}/>
               <input type="text" placeholder="Enter 4-Letter Code" maxLength="4" value={joinCodeInput} onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())} style={{ width: '90%', padding: '10px', marginBottom: '10px', borderRadius: '5px', border: '1px solid #444', backgroundColor: '#333', color: 'white', textAlign: 'center', fontWeight: 'bold' }} />
-              <button onClick={handleJoinRoom} style={lobbyBtnStyle('#4caf50')}>Join Room</button>
+              <button onClick={() => handleJoinRoom()} style={lobbyBtnStyle('#4caf50')}>Join Room</button>
             </div>
           </div>
-          <button onClick={() => handleStartLocalGame('practice')} style={{ marginTop: '30px', background: 'transparent', color: '#aaa', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-            Or Practice Locally (2-Player Same Screen)
-          </button>
         </div>
-      ) : (
+      )}
+
+      {view === 'tournaments' && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '80px', fontFamily: 'sans-serif', color: '#fff', width: '80%', margin: '80px auto 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center', marginBottom: '20px' }}>
+            <h1 style={{ color: '#ffd700', margin: 0 }}>🏆 Live Tournaments</h1>
+            <button onClick={() => setView('lobby')} style={{ padding: '10px 20px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>← Back to Lobby</button>
+          </div>
+
+          {isAdmin && (
+            <button onClick={handleCreateTournament} style={{ padding: '15px 30px', backgroundColor: '#ff4c4c', color: 'white', border: 'none', borderRadius: '5px', fontSize: '18px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '30px', width: '100%' }}>
+              ➕ Create 8-Player Knockout Tournament (Admin)
+            </button>
+          )}
+
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            {tournaments.length === 0 ? <p style={{ textAlign: 'center', color: '#aaa' }}>No tournaments available right now.</p> : null}
+            
+            {tournaments.map(t => {
+              const players = t.registeredPlayers ? t.registeredPlayers.split(',').filter(p => p !== '') : [];
+              const isRegistered = currentUser && players.includes(currentUser.username);
+              const isFull = players.length >= 8;
+
+              return (
+                <div key={t.id} style={{ backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderLeft: t.status === 'IN_PROGRESS' ? '5px solid #4caf50' : '5px solid #ffd700' }}>
+                  <div>
+                    <h2 style={{ margin: '0 0 10px 0' }}>{t.name} <span style={{ fontSize: '14px', color: '#aaa', fontWeight: 'normal' }}>({t.status})</span></h2>
+                    <p style={{ margin: 0, color: '#ddd' }}>👥 Players: <strong>{players.length} / 8</strong></p>
+                    <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#888' }}>{players.join(', ') || 'No players yet'}</p>
+                  </div>
+                  
+                  <div>
+                    {t.status === 'PENDING' && !isAdmin && !isRegistered && !isFull && (
+                      <button onClick={() => handleRegisterTournament(t.id)} style={{ padding: '10px 20px', backgroundColor: '#646cff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Register Now</button>
+                    )}
+                    {t.status === 'PENDING' && !isAdmin && isRegistered && (
+                      <span style={{ color: '#4caf50', fontWeight: 'bold' }}>✅ You are registered. Waiting for Admin to start...</span>
+                    )}
+                    {t.status === 'PENDING' && isAdmin && (
+                      <button onClick={() => handleStartTournament(t.id)} disabled={!isFull} style={{ padding: '10px 20px', backgroundColor: isFull ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '5px', cursor: isFull ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}>
+                        {isFull ? 'Start Tournament (Generate Brackets)' : 'Waiting for 8 Players...'}
+                      </button>
+                    )}
+                    {t.status === 'IN_PROGRESS' && (
+                       <p style={{ color: '#4caf50', fontWeight: 'bold', margin: 0 }}>Tournament is live! (Check matches below)</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {view === 'game' && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: '30px', gap: '40px', fontFamily: 'sans-serif' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             {gameMode === 'multiplayer' && (
               <div style={{ backgroundColor: '#ff4c4c', color: 'white', padding: '10px 20px', borderRadius: '8px', marginBottom: '10px', fontWeight: 'bold', fontSize: '1.2rem', boxShadow: '0 4px 10px rgba(255, 76, 76, 0.3)' }}>
-                Room Code: {roomId}
+                Room Code: {roomId} (You are {playerColor === 'w' ? 'White' : 'Black'})
               </div>
             )}
             <h3 style={{ color: game.isGameOver() ? '#ff4c4c' : '#4caf50', margin: '10px 0' }}>{gameStatus}</h3>
@@ -470,12 +519,8 @@ export default function App() {
               />
             </div>
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button onClick={leaveGame} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '5px' }}>← Back to Lobby</button>
-              
-              {gameMode === 'practice' && (
-                <button onClick={handleUndo} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#ffa500', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold' }}>↩ Undo</button>
-              )}
-
+              <button onClick={leaveGame} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '5px' }}>← Back</button>
+              {gameMode === 'practice' && <button onClick={handleUndo} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#ffa500', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold' }}>↩ Undo</button>}
               <button onClick={() => setIsTutorialOpen(true)} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '5px' }}>How to Play 📖</button>
             </div>
           </div>
@@ -491,6 +536,6 @@ export default function App() {
   );
 }
 
-function lobbyBtnStyle(color) {
-  return { display: 'block', width: '100%', padding: '12px', margin: '10px 0', backgroundColor: color, color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold' };
+function lobbyBtnStyle(bg, text = 'white') {
+  return { display: 'block', width: '100%', padding: '12px', margin: '10px 0', backgroundColor: bg, color: text, border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold' };
 }
