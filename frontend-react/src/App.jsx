@@ -178,22 +178,39 @@ export default function App() {
       const response = await fetch(`${BACKEND_URL}/api/rooms/${code}`);
       if (response.ok) {
         const currentData = await response.text();
+        
+        // --- THE FIX: Clean the string just like we do in the WebSocket! ---
+        const cleanData = currentData.replace(/^"|"$/g, '').replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        
         setRoomId(code);
         setGameMode('multiplayer');
         
         const newGame = new Chess();
-        if (currentData.includes("1.") || currentData.includes("[")) newGame.loadPgn(currentData);
-        else newGame.load(currentData);
-        setGame(newGame); 
+        try {
+          if (cleanData.includes("1.") || cleanData.includes("[")) {
+            newGame.loadPgn(cleanData);
+          } else {
+            newGame.load(cleanData);
+          }
+        } catch (err) {
+          console.error("PGN Load Error on Join: ", err);
+          // If the string is completely broken, fallback to a fresh board so the app doesn't crash
+          newGame.reset(); 
+        }
         
+        setGame(newGame); 
         setView('game');
 
         if (stompClient && stompClient.connected) {
           if (roomSubscriptionRef.current) roomSubscriptionRef.current.unsubscribe();
           roomSubscriptionRef.current = stompClient.subscribe(`/topic/room/${code}`, subscribeToRoom);
         }
-      } else { alert("Room not found! Check the code."); }
-    } catch (error) { console.error("Failed to join room:", error); }
+      } else { 
+        alert("Room not found! Check the code."); 
+      }
+    } catch (error) { 
+      console.error("Failed to join room:", error); 
+    }
   }
 
   function subscribeToRoom(message) {
