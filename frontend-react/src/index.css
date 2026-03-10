@@ -1,0 +1,10 @@
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #242424; /* Dark mode background */
+  color: white;
+}
+
+#root {
+  width: 100%;
+}
