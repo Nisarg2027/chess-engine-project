@@ -198,12 +198,23 @@ export default function App() {
   }
 
   function subscribeToRoom(message) {
+    // Remove extra quotes and handle newlines from the server
     const cleanData = message.body.replace(/^"|"$/g, '').replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    
     setGame((currentGame) => {
-        const newGame = new Chess();
-        if (cleanData.includes("1.") || cleanData.includes("[")) newGame.loadPgn(cleanData);
-        else newGame.load(cleanData);
+      const newGame = new Chess();
+      try {
+        // Always prefer PGN for multiplayer to keep history synced
+        if (cleanData.includes("1.") || cleanData.includes("[")) {
+          newGame.loadPgn(cleanData);
+        } else {
+          newGame.load(cleanData);
+        }
         return newGame;
+      } catch (err) {
+        console.error("Multiplayer Sync Error: ", err);
+        return currentGame; // Keep the current board if the incoming move is 'illegal'
+      }
     });
   }
 
@@ -334,6 +345,16 @@ export default function App() {
 
   // Drag and drop now just calls the unified move logic
   function onDrop(sourceSquare, targetSquare) {
+    if (gameMode === 'multiplayer') {
+        if (stompClient && stompClient.connected) {
+          // Send the full PGN history so the other player can reconstruct the game perfectly
+          const pgnData = gameCopy.pgn();
+          stompClient.publish({ 
+            destination: '/app/room/move', 
+            body: JSON.stringify({ roomId: roomId, fen: pgnData }) 
+          });
+        }
+      }
     return makeMove(sourceSquare, targetSquare);
   }
 
