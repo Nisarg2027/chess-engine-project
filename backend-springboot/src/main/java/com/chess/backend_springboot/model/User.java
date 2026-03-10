@@ -1,6 +1,11 @@
 package com.chess.backend_springboot.model;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "users") // "user" is a reserved keyword in some databases, so we use "users"
@@ -43,4 +48,10 @@ public class User {
 
     public int getLosses() { return losses; }
     public void setLosses(int losses) { this.losses = losses; }
+
+    // ROLE_PLAYER or ROLE_ADMIN
+    private String role = "ROLE_PLAYER"; 
+
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
 }
