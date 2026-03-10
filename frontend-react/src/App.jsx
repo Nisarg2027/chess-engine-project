@@ -179,23 +179,29 @@ export default function App() {
       if (response.ok) {
         const currentData = await response.text();
         
-        // --- THE FIX: Clean the string just like we do in the WebSocket! ---
-        const cleanData = currentData.replace(/^"|"$/g, '').replace(/\\n/g, '\n').replace(/\\"/g, '"');
-        
+        // --- BULLETPROOF UNWRAPPING ---
+        let boardData = currentData;
+        try {
+          const parsed = JSON.parse(currentData);
+          // If Java sent a JSON object, extract the FEN/PGN string from it
+          if (typeof parsed === 'object' && parsed !== null) {
+            boardData = parsed.fen || parsed.board || parsed.pgn || currentData;
+          }
+        } catch(e) { /* Ignore, it's just a raw string */ }
+
         setRoomId(code);
         setGameMode('multiplayer');
         
         const newGame = new Chess();
         try {
-          if (cleanData.includes("1.") || cleanData.includes("[")) {
-            newGame.loadPgn(cleanData);
+          if (boardData.includes("1.") || boardData.includes("[")) {
+            newGame.loadPgn(boardData);
           } else {
-            newGame.load(cleanData);
+            newGame.load(boardData);
           }
         } catch (err) {
           console.error("PGN Load Error on Join: ", err);
-          // If the string is completely broken, fallback to a fresh board so the app doesn't crash
-          newGame.reset(); 
+          newGame.reset(); // Failsafe
         }
         
         setGame(newGame); 
@@ -206,7 +212,7 @@ export default function App() {
           roomSubscriptionRef.current = stompClient.subscribe(`/topic/room/${code}`, subscribeToRoom);
         }
       } else { 
-        alert("Room not found! Check the code."); 
+        alert("Room not found! The server might have restarted, or the code is wrong."); 
       }
     } catch (error) { 
       console.error("Failed to join room:", error); 
@@ -214,24 +220,34 @@ export default function App() {
   }
 
   function subscribeToRoom(message) {
-    const cleanData = message.body.replace(/^"|"$/g, '').replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    // --- BULLETPROOF UNWRAPPING ---
+    let boardData = message.body;
+    try {
+      const parsed = JSON.parse(message.body);
+      if (typeof parsed === 'object' && parsed !== null) {
+        boardData = parsed.fen || parsed.board || parsed.pgn || message.body;
+      } else if (typeof parsed === 'string') {
+        boardData = parsed;
+      }
+    } catch(e) { /* Ignore */ }
     
     setGame((currentGame) => {
       const newGame = new Chess();
       try {
-        if (cleanData.includes("1.") || cleanData.includes("[")) {
-          newGame.loadPgn(cleanData);
+        if (boardData.includes("1.") || boardData.includes("[")) {
+          newGame.loadPgn(boardData);
         } else {
-          newGame.load(cleanData);
+          newGame.load(boardData);
         }
         return newGame;
       } catch (err) {
         console.error("Multiplayer Sync Error: ", err);
-        return currentGame; 
+        return currentGame; // Reject illegal/broken packets
       }
     });
   }
 
+  
   function handleStartLocalGame(mode) {
     setGameMode(mode);
     setGame(new Chess());
