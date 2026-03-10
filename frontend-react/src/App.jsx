@@ -110,6 +110,9 @@ export default function App() {
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [optionSquares, setOptionSquares] = useState({});
   const [moveFrom, setMoveFrom] = useState(null); 
+  
+  // NEW: Track which color the current player is assigned
+  const [playerColor, setPlayerColor] = useState('w'); 
 
   useEffect(() => {
     const socket = new SockJS(`${BACKEND_URL}/chess-socket`);
@@ -160,6 +163,7 @@ export default function App() {
       const newRoomId = await response.text();
       setRoomId(newRoomId);
       setGameMode('multiplayer');
+      setPlayerColor('w'); // Room creator is always White
       setGame(new Chess()); 
       setView('game');
 
@@ -189,22 +193,26 @@ export default function App() {
           }
         } catch(e) {}
 
-        // Strip any lingering network quotes
         boardData = boardData.replace(/^"|"$/g, '').trim();
 
         setRoomId(code);
         setGameMode('multiplayer');
+        setPlayerColor('b'); // Joiner is always Black
         
         const newGame = new Chess();
         try {
-          // If the DB has an old PGN, try to load it. Otherwise, load the clean FEN.
-          if (boardData.includes("1.") || boardData.includes("[")) {
-            newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
-          } else {
-            newGame.load(boardData); 
+          // Attempt to decode Base64 PGN first
+          newGame.loadPgn(atob(boardData));
+        } catch (e) {
+          try {
+            if (boardData.includes("1.") || boardData.includes("[")) {
+              newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
+            } else {
+              newGame.load(boardData); 
+            }
+          } catch(err) {
+            console.error("Board Load Error: ", err);
           }
-        } catch (err) {
-          console.error("Board Load Error: ", err);
         }
         
         setGame(newGame); 
@@ -233,28 +241,32 @@ export default function App() {
       }
     } catch(e) {}
     
-    // Strip any lingering network quotes
     boardData = boardData.replace(/^"|"$/g, '').trim();
     
     setGame((currentGame) => {
       const newGame = new Chess();
       try {
-        if (boardData.includes("1.") || boardData.includes("[")) {
-          newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
-        } else {
-          newGame.load(boardData); // Instantly snap the board to the exact FEN state
+        // Attempt to decode Base64 PGN first
+        newGame.loadPgn(atob(boardData));
+      } catch (e) {
+        try {
+          if (boardData.includes("1.") || boardData.includes("[")) {
+            newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
+          } else {
+            newGame.load(boardData); 
+          }
+        } catch(err) {
+          console.error("Sync Error: ", err);
+          return currentGame;
         }
-        return newGame;
-      } catch (err) {
-        console.error("Sync Error: ", err);
-        return currentGame; 
       }
+      return newGame;
     });
   }
 
-  
   function handleStartLocalGame(mode) {
     setGameMode(mode);
+    setPlayerColor('w'); 
     setGame(new Chess());
     setRoomId('');
     setView('game');
@@ -302,6 +314,11 @@ export default function App() {
   function makeMove(sourceSquare, targetSquare) {
     if (game.isGameOver() || isAiThinking) return false;
     
+    // NEW: Strict Turn Enforcement for Multiplayer
+    if (gameMode === 'multiplayer' && game.turn() !== playerColor) {
+      return false; 
+    }
+    
     const gameCopy = new Chess();
     gameCopy.loadPgn(game.pgn()); 
     
@@ -334,11 +351,9 @@ export default function App() {
 
       if (gameMode === 'multiplayer') {
         if (stompClient && stompClient.connected) {
-          // Switched to FEN: 100% immune to network corruption
-          stompClient.publish({ 
-            destination: '/app/room/move', 
-            body: JSON.stringify({ roomId: roomId, fen: gameCopy.fen() }) 
-          });
+          // Encrypt history in Base64 so the network cannot corrupt it
+          const safeHistory = btoa(gameCopy.pgn());
+          stompClient.publish({ destination: '/app/room/move', body: JSON.stringify({ roomId: roomId, fen: safeHistory }) });
         }
       } else if (gameMode !== 'practice') {
         setIsAiThinking(true);
@@ -354,6 +369,11 @@ export default function App() {
 
   function onSquareClick(square) { 
     if (isAiThinking || game.isGameOver()) return;
+
+    // NEW: Strict Piece Selection Enforcement
+    if (gameMode === 'multiplayer' && game.get(square) && game.get(square).color !== playerColor && !moveFrom) {
+      return; 
+    }
 
     if (moveFrom) {
       const moveSuccess = makeMove(moveFrom, square);
@@ -383,8 +403,11 @@ export default function App() {
   else if (game.isDraw()) gameStatus = "🤝 Draw!";
   else if (isAiThinking) gameStatus = "🤔 AI is calculating...";
   else if (gameMode === 'practice') gameStatus = "Practice Mode (Local Play)";
-  else if (gameMode === 'multiplayer') gameStatus = "Online Multiplayer";
-  else gameStatus = "Your turn (White)";
+  else if (gameMode === 'multiplayer') {
+    gameStatus = game.turn() === playerColor ? "Your turn!" : "Waiting for opponent...";
+  } else {
+    gameStatus = "Your turn (White)";
+  }
 
   // --- RENDER ---
   return (
@@ -438,7 +461,13 @@ export default function App() {
             )}
             <h3 style={{ color: game.isGameOver() ? '#ff4c4c' : '#4caf50', margin: '10px 0' }}>{gameStatus}</h3>
             <div style={{ width: '500px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', borderRadius: '4px' }}>
-              <Chessboard position={game.fen()} onPieceDrop={onDrop} onSquareClick={onSquareClick} customSquareStyles={optionSquares} />
+              <Chessboard 
+                position={game.fen()} 
+                onPieceDrop={onDrop} 
+                onSquareClick={onSquareClick} 
+                customSquareStyles={optionSquares} 
+                boardOrientation={gameMode === 'multiplayer' && playerColor === 'b' ? 'black' : 'white'} 
+              />
             </div>
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
               <button onClick={leaveGame} style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '5px' }}>← Back to Lobby</button>
