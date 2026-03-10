@@ -179,29 +179,32 @@ export default function App() {
       if (response.ok) {
         const currentData = await response.text();
         
-        // --- BULLETPROOF UNWRAPPING ---
         let boardData = currentData;
         try {
           const parsed = JSON.parse(currentData);
-          // If Java sent a JSON object, extract the FEN/PGN string from it
           if (typeof parsed === 'object' && parsed !== null) {
-            boardData = parsed.fen || parsed.board || parsed.pgn || currentData;
+            boardData = parsed.fen || parsed.board || currentData;
+          } else if (typeof parsed === 'string') {
+            boardData = parsed;
           }
-        } catch(e) { /* Ignore, it's just a raw string */ }
+        } catch(e) {}
+
+        // Strip any lingering network quotes
+        boardData = boardData.replace(/^"|"$/g, '').trim();
 
         setRoomId(code);
         setGameMode('multiplayer');
         
         const newGame = new Chess();
         try {
+          // If the DB has an old PGN, try to load it. Otherwise, load the clean FEN.
           if (boardData.includes("1.") || boardData.includes("[")) {
-            newGame.loadPgn(boardData);
+            newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
           } else {
-            newGame.load(boardData);
+            newGame.load(boardData); 
           }
         } catch (err) {
-          console.error("PGN Load Error on Join: ", err);
-          newGame.reset(); // Failsafe
+          console.error("Board Load Error: ", err);
         }
         
         setGame(newGame); 
@@ -212,7 +215,7 @@ export default function App() {
           roomSubscriptionRef.current = stompClient.subscribe(`/topic/room/${code}`, subscribeToRoom);
         }
       } else { 
-        alert("Room not found! The server might have restarted, or the code is wrong."); 
+        alert("Room not found!"); 
       }
     } catch (error) { 
       console.error("Failed to join room:", error); 
@@ -220,29 +223,31 @@ export default function App() {
   }
 
   function subscribeToRoom(message) {
-    // --- BULLETPROOF UNWRAPPING ---
     let boardData = message.body;
     try {
       const parsed = JSON.parse(message.body);
       if (typeof parsed === 'object' && parsed !== null) {
-        boardData = parsed.fen || parsed.board || parsed.pgn || message.body;
+        boardData = parsed.fen || parsed.board || message.body;
       } else if (typeof parsed === 'string') {
         boardData = parsed;
       }
-    } catch(e) { /* Ignore */ }
+    } catch(e) {}
+    
+    // Strip any lingering network quotes
+    boardData = boardData.replace(/^"|"$/g, '').trim();
     
     setGame((currentGame) => {
       const newGame = new Chess();
       try {
         if (boardData.includes("1.") || boardData.includes("[")) {
-          newGame.loadPgn(boardData);
+          newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
         } else {
-          newGame.load(boardData);
+          newGame.load(boardData); // Instantly snap the board to the exact FEN state
         }
         return newGame;
       } catch (err) {
-        console.error("Multiplayer Sync Error: ", err);
-        return currentGame; // Reject illegal/broken packets
+        console.error("Sync Error: ", err);
+        return currentGame; 
       }
     });
   }
@@ -329,7 +334,11 @@ export default function App() {
 
       if (gameMode === 'multiplayer') {
         if (stompClient && stompClient.connected) {
-          stompClient.publish({ destination: '/app/room/move', body: JSON.stringify({ roomId: roomId, fen: gameCopy.pgn() }) });
+          // Switched to FEN: 100% immune to network corruption
+          stompClient.publish({ 
+            destination: '/app/room/move', 
+            body: JSON.stringify({ roomId: roomId, fen: gameCopy.fen() }) 
+          });
         }
       } else if (gameMode !== 'practice') {
         setIsAiThinking(true);
