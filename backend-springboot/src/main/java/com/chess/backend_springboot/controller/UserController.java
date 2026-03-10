@@ -1,15 +1,20 @@
 package com.chess.backend_springboot.controller;
 
+import java.util.Optional;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
 import com.chess.backend_springboot.model.User;
 import com.chess.backend_springboot.repository.UserRepository;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/users")
-@CrossOrigin(origins = "http://localhost:5173") // Allow React to talk to this API
+@CrossOrigin(origins = "https://chess-engine-project.vercel.app", allowCredentials = "true") // <--- ADD THIS LINE
 public class UserController {
 
     private final UserRepository userRepository;
