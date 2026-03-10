@@ -1,11 +1,12 @@
 package com.chess.backend_springboot.controller;
 
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
 import com.chess.backend_springboot.engine.Minimax;
 import com.chess.backend_springboot.engine.OpeningBook;
+import com.chess.backend_springboot.engine.RoomManager;
 import com.github.bhlangonijr.chesslib.Board;
 import com.github.bhlangonijr.chesslib.move.Move;
 
@@ -13,33 +14,50 @@ import com.github.bhlangonijr.chesslib.move.Move;
 public class GameController {
     private final Minimax ai = new Minimax();
     private final OpeningBook openingBook = new OpeningBook();
+    
+    private final SimpMessagingTemplate messagingTemplate;
+    private final RoomManager roomManager;
+
+    public GameController(SimpMessagingTemplate messagingTemplate, RoomManager roomManager) {
+        this.messagingTemplate = messagingTemplate;
+        this.roomManager = roomManager;
+    }
 
     @MessageMapping("/move")
-    @SendTo("/topic/board")
-    public String processMove(String incomingFenStr) {
-        String cleanFen = incomingFenStr.replace("\"", "");
+    public void processMove(MoveRequest request) {
+        String cleanFen = request.getFen().replace("\"", "");
         Board board = new Board();
         board.loadFromFen(cleanFen);
 
         if (board.isMated() || board.isDraw()) {
-            return board.getFen();
+            messagingTemplate.convertAndSend("/topic/board", "{\"fen\":\"" + board.getFen() + "\"}");
+            return;
         }
 
-        // 1. Check the Opening Book FIRST
-        Move bestMove = openingBook.getBookMove(board);
-        // 2. If no book move is found, turn on the Minimax engine (Depth 5)
+        int searchDepth = 5; 
+        if ("easy".equalsIgnoreCase(request.getDifficulty())) searchDepth = 1;
+        else if ("medium".equalsIgnoreCase(request.getDifficulty())) searchDepth = 3;
+
+        Move bestMove = openingBook.getBookMove(board); 
         if (bestMove == null) {
-            System.out.println("No book move found. AI is thinking...");
-            bestMove = ai.findBestMove(board, 5);
-        } else {
-            System.out.println("📖 Book move played instantly!");
+            bestMove = ai.findBestMove(board, searchDepth); 
         }
 
-        // 3. Execute the move
         if (bestMove != null) {
+            String aiMoveStr = bestMove.toString(); // Retrieves the LAN string, e.g., e7e5
             board.doMove(bestMove);
+            
+            // NEW: Send both the move and the new FEN back as JSON
+            String payload = "{\"move\":\"" + aiMoveStr + "\", \"fen\":\"" + board.getFen() + "\"}";
+            messagingTemplate.convertAndSend("/topic/board", payload);
         }
+    }
 
-        return board.getFen();
+    @MessageMapping("/room/move")
+    public void processRoomMove(RoomMoveRequest request) {
+        // In multiplayer, this now holds the full PGN history string
+        String cleanData = request.getFen().replace("\"", ""); 
+        roomManager.updateRoom(request.getRoomId(), cleanData);
+        messagingTemplate.convertAndSend("/topic/room/" + request.getRoomId(), cleanData);
     }
 }
