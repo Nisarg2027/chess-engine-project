@@ -5,7 +5,7 @@ import { Chessboard } from 'react-chessboard';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
-// --- TUTORIAL & AUTH MODALS (Unchanged) ---
+// --- TUTORIAL & AUTH MODALS ---
 function TutorialModal({ isOpen, onClose }) {
   if (!isOpen) return null;
   return (
@@ -60,9 +60,7 @@ function AuthModal({ isOpen, onClose, onLoginSuccess }) {
       } else {
         setErrorMsg(isLogin ? "Invalid credentials" : "Username already exists");
       }
-    } catch (err) {
-      setErrorMsg("Failed to connect to server");
-    }
+    } catch (err) { setErrorMsg("Failed to connect to server"); }
   }
 
   return (
@@ -95,7 +93,7 @@ export default function App() {
   const [game, setGame] = useState(new Chess());
   const [stompClient, setStompClient] = useState(null);
   
-  const [view, setView] = useState('lobby'); // 'lobby', 'game', or 'tournaments'
+  const [view, setView] = useState('lobby'); // 'lobby', 'game', 'tournaments', 'bracket'
   const [gameMode, setGameMode] = useState('hard'); 
   const [currentUser, setCurrentUser] = useState(null);
   
@@ -111,8 +109,10 @@ export default function App() {
   const [moveFrom, setMoveFrom] = useState(null); 
   const [playerColor, setPlayerColor] = useState('w'); 
 
-  // Tournament State
+  // Tournament States
   const [tournaments, setTournaments] = useState([]);
+  const [bracketMatches, setBracketMatches] = useState([]);
+  const [currentTournamentName, setCurrentTournamentName] = useState('');
 
   useEffect(() => {
     const socket = new SockJS(`${BACKEND_URL}/chess-socket`);
@@ -134,14 +134,10 @@ export default function App() {
                       to: data.move.substring(2, 4),
                       promotion: data.move.length > 4 ? data.move[4] : 'q'
                     });
-                  } else {
-                    gameCopy.load(data.fen); 
-                  }
+                  } else { gameCopy.load(data.fen); }
                   return gameCopy;
                 });
-              } catch (e) {
-                setGame(new Chess(message.body.replace(/^"|"$/g, '')));
-              }
+              } catch (e) { setGame(new Chess(message.body.replace(/^"|"$/g, ''))); }
               setIsAiThinking(false);
             }
             return currentMode;
@@ -187,9 +183,7 @@ export default function App() {
       if (res.ok) {
         alert("Registered successfully!");
         fetchTournaments();
-      } else {
-        alert(await res.text());
-      }
+      } else { alert(await res.text()); }
     } catch (err) { alert("Failed to register."); }
   }
 
@@ -199,10 +193,19 @@ export default function App() {
       if (res.ok) {
         alert("Tournament Started! Brackets generated.");
         fetchTournaments();
-      } else {
-        alert(await res.text());
-      }
+      } else { alert(await res.text()); }
     } catch (err) { alert("Failed to start tournament."); }
+  }
+
+  async function handleViewBracket(tournament) {
+    setCurrentTournamentName(tournament.name);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/tournaments/${tournament.id}/matches`);
+      if (res.ok) {
+        setBracketMatches(await res.json());
+        setView('bracket');
+      }
+    } catch (err) { alert("Failed to load brackets."); }
   }
 
   // --- MULTIPLAYER ROOM LOGIC ---
@@ -223,7 +226,8 @@ export default function App() {
     } catch (error) { alert("Failed to connect to server."); }
   }
 
-  async function handleJoinRoom(codeOverride) {
+  // Modified to support passing assigned colors from the Tournament Bracket
+  async function handleJoinRoom(codeOverride, colorOverride) {
     const code = (codeOverride || joinCodeInput).trim().toUpperCase();
     if (code.length !== 4) return alert("Room code must be 4 characters!");
 
@@ -242,7 +246,9 @@ export default function App() {
 
         setRoomId(code);
         setGameMode('multiplayer');
-        setPlayerColor('b'); 
+        
+        // If coming from bracket, use assigned color. Otherwise default to Black.
+        setPlayerColor(colorOverride || 'b'); 
         
         const newGame = new Chess();
         try {
@@ -277,9 +283,8 @@ export default function App() {
     
     setGame((currentGame) => {
       const newGame = new Chess();
-      try {
-        newGame.loadPgn(atob(boardData));
-      } catch (e) {
+      try { newGame.loadPgn(atob(boardData)); } 
+      catch (e) {
         try {
           if (boardData.includes("1.") || boardData.includes("[")) newGame.loadPgn(boardData.replace(/\\n/g, '\n').replace(/\\"/g, '"'));
           else newGame.load(boardData); 
@@ -350,6 +355,23 @@ export default function App() {
       setOptionSquares({}); 
       setMoveFrom(null); 
 
+      if (gameCopy.isGameOver() && currentUser) {
+        let outcome = 'draw';
+        if (gameCopy.isCheckmate()) {
+          outcome = 'win';
+          alert("🏆 Checkmate! You won +30 Trophies!");
+        } else { alert("🤝 Game Over! It's a draw."); }
+        
+        fetch(`${BACKEND_URL}/api/users/update-rating`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: currentUser.username, outcome: outcome })
+        })
+        .then(res => res.json())
+        .then(updatedUser => setCurrentUser(updatedUser)) 
+        .catch(err => console.error("Failed to update Elo:", err));
+      }
+
       if (gameMode === 'multiplayer') {
         if (stompClient && stompClient.connected) {
           const safeHistory = btoa(gameCopy.pgn());
@@ -388,9 +410,7 @@ export default function App() {
     }
   }
 
-  function onDrop(sourceSquare, targetSquare) {
-    return makeMove(sourceSquare, targetSquare);
-  }
+  function onDrop(sourceSquare, targetSquare) { return makeMove(sourceSquare, targetSquare); }
 
   let gameStatus = "Game in Progress";
   if (game.isCheckmate()) gameStatus = "🏆 Checkmate!";
@@ -408,7 +428,6 @@ export default function App() {
       <TutorialModal isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} onLoginSuccess={setCurrentUser} />
 
-      {/* HEADER BAR */}
       <div style={{ position: 'absolute', top: '20px', right: '30px', textAlign: 'right', fontFamily: 'sans-serif', zIndex: 10 }}>
         {currentUser ? (
           <div style={{ backgroundColor: '#1a1a1a', padding: '10px 20px', borderRadius: '8px', border: isAdmin ? '2px solid #ffd700' : '1px solid #4caf50' }}>
@@ -425,7 +444,6 @@ export default function App() {
         )}
       </div>
 
-      {/* VIEW ROUTING */}
       {view === 'lobby' && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '100px', fontFamily: 'sans-serif', color: '#fff' }}>
           <h1 style={{ fontSize: '3rem', marginBottom: '40px' }}>♟️ Universal Chess</h1>
@@ -474,7 +492,6 @@ export default function App() {
                   <div>
                     <h2 style={{ margin: '0 0 10px 0' }}>{t.name} <span style={{ fontSize: '14px', color: '#aaa', fontWeight: 'normal' }}>({t.status})</span></h2>
                     <p style={{ margin: 0, color: '#ddd' }}>👥 Players: <strong>{players.length} / 8</strong></p>
-                    <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#888' }}>{players.join(', ') || 'No players yet'}</p>
                   </div>
                   
                   <div>
@@ -482,15 +499,15 @@ export default function App() {
                       <button onClick={() => handleRegisterTournament(t.id)} style={{ padding: '10px 20px', backgroundColor: '#646cff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Register Now</button>
                     )}
                     {t.status === 'PENDING' && !isAdmin && isRegistered && (
-                      <span style={{ color: '#4caf50', fontWeight: 'bold' }}>✅ You are registered. Waiting for Admin to start...</span>
+                      <span style={{ color: '#4caf50', fontWeight: 'bold' }}>✅ Registered. Waiting for Admin...</span>
                     )}
                     {t.status === 'PENDING' && isAdmin && (
                       <button onClick={() => handleStartTournament(t.id)} disabled={!isFull} style={{ padding: '10px 20px', backgroundColor: isFull ? '#4caf50' : '#555', color: 'white', border: 'none', borderRadius: '5px', cursor: isFull ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}>
-                        {isFull ? 'Start Tournament (Generate Brackets)' : 'Waiting for 8 Players...'}
+                        {isFull ? 'Start Tournament' : 'Waiting for 8 Players...'}
                       </button>
                     )}
                     {t.status === 'IN_PROGRESS' && (
-                       <p style={{ color: '#4caf50', fontWeight: 'bold', margin: 0 }}>Tournament is live! (Check matches below)</p>
+                       <button onClick={() => handleViewBracket(t)} style={{ padding: '10px 20px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>View Brackets</button>
                     )}
                   </div>
                 </div>
@@ -500,6 +517,46 @@ export default function App() {
         </div>
       )}
 
+      {/* NEW BRACKET VIEW */}
+      {view === 'bracket' && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '80px', fontFamily: 'sans-serif', color: '#fff' }}>
+           <div style={{ display: 'flex', justifyContent: 'space-between', width: '80%', alignItems: 'center', marginBottom: '20px' }}>
+            <h1 style={{ color: '#ffd700', margin: 0 }}>{currentTournamentName} - Round 1 Brackets</h1>
+            <button onClick={() => { setView('tournaments'); fetchTournaments(); }} style={{ padding: '10px 20px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>← Back to Tournaments</button>
+          </div>
+          
+          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', width: '80%' }}>
+            {bracketMatches.map((m, index) => {
+               // Check if current user is in this specific match to let them join
+               const isWhite = currentUser && currentUser.username === m.playerWhite;
+               const isBlack = currentUser && currentUser.username === m.playerBlack;
+               const isMyMatch = isWhite || isBlack;
+
+               return (
+                 <div key={m.id} style={{ backgroundColor: '#1a1a1a', padding: '20px', borderRadius: '8px', width: '300px', textAlign: 'center', border: isMyMatch ? '2px solid #4caf50' : '1px solid #444' }}>
+                   <h3 style={{ margin: '0 0 15px 0', color: '#aaa' }}>Match {index + 1}</h3>
+                   
+                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                     <span style={{ fontWeight: isWhite ? 'bold' : 'normal', color: isWhite ? '#4caf50' : '#fff' }}>⚪ {m.playerWhite}</span>
+                     <span style={{ color: '#ff4c4c', fontWeight: 'bold' }}>VS</span>
+                     <span style={{ fontWeight: isBlack ? 'bold' : 'normal', color: isBlack ? '#4caf50' : '#fff' }}>⚫ {m.playerBlack}</span>
+                   </div>
+                   
+                   {isMyMatch ? (
+                     <button onClick={() => handleJoinRoom(m.matchRoomCode, isWhite ? 'w' : 'b')} style={{ marginTop: '15px', width: '100%', padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                       Join Your Match!
+                     </button>
+                   ) : (
+                     <p style={{ color: '#666', fontSize: '14px', marginTop: '15px' }}>Room Code: {m.matchRoomCode}</p>
+                   )}
+                 </div>
+               );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* GAME VIEW */}
       {view === 'game' && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: '30px', gap: '40px', fontFamily: 'sans-serif' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
