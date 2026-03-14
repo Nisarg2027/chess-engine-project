@@ -34,28 +34,37 @@ public class GameController {
             return;
         }
 
+        String difficulty = request.getDifficulty() != null ? request.getDifficulty() : "hard";
         int searchDepth = 5; 
-        if ("easy".equalsIgnoreCase(request.getDifficulty())) searchDepth = 1;
-        else if ("medium".equalsIgnoreCase(request.getDifficulty())) searchDepth = 3;
+        
+        if ("easy".equalsIgnoreCase(difficulty)) searchDepth = 1;
+        else if ("medium".equalsIgnoreCase(difficulty)) searchDepth = 3;
 
-        Move bestMove = openingBook.getBookMove(board); 
+        Move bestMove = null;
+        
+        // Disable Opening Book for Easy mode so it plays like a true beginner
+        if (!"easy".equalsIgnoreCase(difficulty)) {
+            bestMove = openingBook.getBookMove(board); 
+        }
+
+        // Pass the difficulty into our newly upgraded Minimax router
         if (bestMove == null) {
-            bestMove = ai.findBestMove(board, searchDepth); 
+            bestMove = ai.findBestMove(board, searchDepth, difficulty); 
         }
 
         if (bestMove != null) {
-            String aiMoveStr = bestMove.toString(); // Retrieves the LAN string, e.g., e7e5
+            String aiMoveStr = bestMove.toString(); 
             board.doMove(bestMove);
             
-            // NEW: Send both the move and the new FEN back as JSON
             String payload = "{\"move\":\"" + aiMoveStr + "\", \"fen\":\"" + board.getFen() + "\"}";
             messagingTemplate.convertAndSend("/topic/board", payload);
         }
     }
 
+    // NOTE: If you implemented the secure RoomState logic earlier for Tournaments, 
+    // you will eventually combine this method with the ChessWebSocketController we built!
     @MessageMapping("/room/move")
     public void processRoomMove(RoomMoveRequest request) {
-        // In multiplayer, this now holds the full PGN history string
         String cleanData = request.getFen().replace("\"", ""); 
         roomManager.updateRoom(request.getRoomId(), cleanData);
         messagingTemplate.convertAndSend("/topic/room/" + request.getRoomId(), cleanData);

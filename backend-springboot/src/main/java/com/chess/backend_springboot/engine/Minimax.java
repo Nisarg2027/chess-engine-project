@@ -1,17 +1,18 @@
 package com.chess.backend_springboot.engine;
 
+import java.util.List;
+import java.util.Random;
+import java.util.stream.Collectors;
+
 import com.github.bhlangonijr.chesslib.Board;
 import com.github.bhlangonijr.chesslib.Piece;
 import com.github.bhlangonijr.chesslib.move.Move;
-
-import java.util.Comparator;
-import java.util.List;
-import java.util.stream.Collectors;
 
 public class Minimax {
     private final BoardEvaluator fastEvaluator = new BoardEvaluator();
     private final NeuralEvaluator smartEvaluator = new NeuralEvaluator();
     private final TranspositionTable tt = new TranspositionTable();
+    private final Random random = new Random();
 
     private static class MoveScore {
         Move move;
@@ -22,38 +23,52 @@ public class Minimax {
         }
     }
 
-    public Move findBestMove(Board board, int depth) {
+    // NEW: Accepts difficulty parameter to scale logic
+    public Move findBestMove(Board board, int depth, String difficulty) {
         tt.clear(); 
 
         List<Move> legalMoves = board.legalMoves();
+        if (legalMoves.isEmpty()) return null;
+
+        // --- EASY MODE: The "Blunder" Factor ---
+        // A real beginner doesn't always play the mathematically best move. 
+        // 25% chance to play a completely random move (hangs pieces, misses mates).
+        if ("easy".equalsIgnoreCase(difficulty) && random.nextInt(100) < 25) {
+            return legalMoves.get(random.nextInt(legalMoves.size()));
+        }
         
         // 1. FAST ENGINE: Calculate the Minimax score for every root move
         List<MoveScore> evaluatedMoves = legalMoves.parallelStream().map(move -> {
             Board threadBoard = board.clone();
             threadBoard.doMove(move);
             
-            // We use ONLY the fast integer math inside the deep tree
             int score = minimax(threadBoard, depth - 1, Integer.MIN_VALUE, Integer.MAX_VALUE, false);
             return new MoveScore(move, score);
         })
-        // Sort them so the highest scores are at the top
         .sorted((ms1, ms2) -> Integer.compare(ms2.score, ms1.score))
         .collect(Collectors.toList());
 
         if (evaluatedMoves.isEmpty()) return null;
 
-        // 2. THE NEURAL JURY: Take the Top 3 tactical moves found by the fast engine
+        // --- EASY / MEDIUM MODE: Bypass the Neural Network ---
+        if ("easy".equalsIgnoreCase(difficulty) || "medium".equalsIgnoreCase(difficulty)) {
+            // Easy Mode has an extra human flaw: 40% chance to pick the 2nd best move instead of the best one.
+            if ("easy".equalsIgnoreCase(difficulty) && evaluatedMoves.size() > 1 && random.nextInt(100) < 40) {
+                return evaluatedMoves.get(1).move;
+            }
+            // Medium relies strictly on raw tactical calculation (Depth 3)
+            return evaluatedMoves.get(0).move;
+        }
+
+        // --- HARD MODE: THE NEURAL JURY ---
         int candidatesToConsider = Math.min(3, evaluatedMoves.size());
         List<MoveScore> topCandidates = evaluatedMoves.subList(0, candidatesToConsider);
 
         Move bestStrategicMove = topCandidates.get(0).move;
         int bestNeuralScore = Integer.MIN_VALUE;
 
-        // 3. Let the Neural Network make the final decision between the top candidates
         for (MoveScore candidate : topCandidates) {
             board.doMove(candidate.move);
-            
-            // Call the Neural Network ONCE per candidate (3 times total!)
             int neuralScore = smartEvaluator.evaluate(board);
             board.undoMove();
 
@@ -66,7 +81,6 @@ public class Minimax {
         return bestStrategicMove;
     }
 
-    // Notice: The recursive tree below is now 100% pure integer math. Zero Neural Network calls.
     private int minimax(Board board, int depth, int alpha, int beta, boolean isMaximizing) {
         int originalAlpha = alpha;
         long zobristKey = board.getZobristKey();

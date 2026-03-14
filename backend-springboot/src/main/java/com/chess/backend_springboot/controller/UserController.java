@@ -14,7 +14,7 @@ import com.chess.backend_springboot.repository.UserRepository;
 
 @RestController
 @RequestMapping("/api/users")
-@CrossOrigin(origins = "https://chess-engine-project.vercel.app", allowCredentials = "true") // <--- ADD THIS LINE
+@CrossOrigin(origins = {"https://chess-engine-project.vercel.app", "http://localhost:5173"}, allowCredentials = "true")
 public class UserController {
 
     private final UserRepository userRepository;

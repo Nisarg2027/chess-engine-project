@@ -36,4 +36,8 @@ public class Tournament {
     public void setStatus(String status) { this.status = status; }
     public String getRegisteredPlayers() { return registeredPlayers; }
     public void setRegisteredPlayers(String registeredPlayers) { this.registeredPlayers = registeredPlayers; }
+    private String boardTheme = "standard";
+
+    public String getBoardTheme() { return boardTheme; }
+    public void setBoardTheme(String boardTheme) { this.boardTheme = boardTheme; }
 }

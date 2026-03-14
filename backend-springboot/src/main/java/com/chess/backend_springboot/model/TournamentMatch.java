@@ -41,4 +41,8 @@ public class TournamentMatch {
     public void setWinner(String winner) { this.winner = winner; }
     public String getMatchRoomCode() { return matchRoomCode; }
     public void setMatchRoomCode(String matchRoomCode) { this.matchRoomCode = matchRoomCode; }
+    private String matchTheme = "standard";
+
+    public String getMatchTheme() { return matchTheme; }
+    public void setMatchTheme(String matchTheme) { this.matchTheme = matchTheme; }
 }
